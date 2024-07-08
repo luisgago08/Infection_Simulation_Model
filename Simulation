@@ -1,0 +1,226 @@
+
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import matplotlib.patches as patches
+
+# Ensure the correct backend is used for interactive plots
+import matplotlib
+matplotlib.use('TkAgg')
+
+# Define the layout dimensions
+# Room 1 coordinates
+room1_start_x, room1_start_y = 0, 0
+room1_end_x, room1_end_y = 100, 60
+
+# Hall 1 coordinates
+hall1_start_x, hall1_start_y = 100, 40
+hall1_end_x, hall1_end_y = 200, 45  # Hall height is 5 units
+
+# Room 2 coordinates
+room2_start_x, room2_start_y = 200, 0
+room2_end_x, room2_end_y = 300, 60
+
+# Hall 2 coordinates
+hall2_start_x, hall2_start_y = 100, 20
+hall2_end_x, hall2_end_y = 200, 25  # Second hall height is 5 units
+
+# Consultation room coordinates
+consult_rooms = [
+    (0, 60, 30, 30), (30, 60, 30, 30),
+    (200, 60, 30, 30), (230, 60, 30, 30)
+]
+
+# Define possible velocities for individuals
+velocities = [0, 1, 2, 3]  # 0: stationary, 1: slow, 2: normal, 3: fast
+infection_probability = 0.1  # Probability of infection
+
+# Individual Class
+class Individual:
+    def __init__(self, id, x, y, status, velocity, role='patient'):
+        self.id = id  # Unique ID for the individual
+        self.x = x  # X-coordinate of the individual's position
+        self.y = y  # Y-coordinate of the individual's position
+        self.status = status  # 'healthy', 'sick', 'infected'
+        self.velocity = velocity  # Movement speed
+        self.direction = random.choice([-1, 1])  # Random initial direction (left or right)
+        self.role = role  # Role: 'patient', 'nurse', 'doctor'
+        self.room = self.get_room()  # Determine the initial room based on coordinates
+
+    def get_room(self):
+        if room1_start_x <= self.x <= room1_end_x and room1_start_y <= self.y <= room1_end_y:
+            return 'room1'
+        elif hall1_start_x <= self.x <= hall1_end_x and hall1_start_y <= self.y <= hall1_end_y:
+            return 'hall1'
+        elif room2_start_x <= self.x <= room2_end_x and room2_start_y <= self.y <= room2_end_y:
+            return 'room2'
+        elif hall2_start_x <= self.x <= hall2_end_x and hall2_start_y <= self.y <= hall2_end_y:
+            return 'hall2'
+        for (start_x, start_y, width, height) in consult_rooms:
+            if start_x <= self.x <= start_x + width and start_y <= self.y <= start_y + height:
+                return 'consultation'
+        return 'undefined'
+
+    def move(self):
+        if self.velocity == 0 or self.role == 'doctor':
+            return  # Stationary individuals and doctors do not move
+
+        if self.room == 'hall1' or self.room == 'hall2':
+            self.x += self.direction * self.velocity
+            if self.x <= hall1_start_x:  # Transition to room1
+                self.room = 'room1'
+                self.x = room1_end_x - 1
+            elif self.x >= hall1_end_x:  # Transition to room2
+                self.room = 'room2'
+                self.x = room2_start_x + 1
+            self.y = hall1_start_y + (hall1_end_y - hall1_start_y) // 2 if self.room == 'hall1' else hall2_start_y + (hall2_end_y - hall2_start_y) // 2
+        else:
+            self.x += random.choice([-self.velocity, self.velocity])
+            self.y += random.choice([-self.velocity, self.velocity])
+            if self.room == 'room1':
+                self.x = max(room1_start_x, min(self.x, room1_end_x))
+                self.y = max(room1_start_y, min(self.y, room1_end_y))
+                if self.x >= room1_end_x:
+                    self.room = random.choice(['hall1', 'hall2'])
+                    if self.room == 'hall1':
+                        self.x = hall1_start_x + 1
+                        self.y = hall1_start_y + (hall1_end_y - hall1_start_y) // 2
+                    else:
+                        self.x = hall2_start_x + 1
+                        self.y = hall2_start_y + (hall2_end_y - hall2_start_y) // 2
+            elif self.room == 'room2':
+                self.x = max(room2_start_x, min(self.x, room2_end_x))
+                self.y = max(room2_start_y, min(self.y, room2_end_y))
+                if self.x <= room2_start_x:
+                    self.room = random.choice(['hall1', 'hall2'])
+                    if self.room == 'hall1':
+                        self.x = hall1_end_x - 1
+                        self.y = hall1_start_y + (hall1_end_y - hall1_start_y) // 2
+                    else:
+                        self.x = hall2_end_x - 1
+                        self.y = hall2_start_y + (hall2_end_y - hall2_start_y) // 2
+
+        # Update the current room
+        self.room = self.get_room()
+
+    def infect(self, others, infection_probability):
+        if self.status == 'sick':
+            for other in others:
+                if other.status == 'healthy' and self.is_near(other):
+                    if random.random() < infection_probability:
+                        other.status = 'infected'
+
+    def is_near(self, other):
+        return abs(self.x - other.x) <= 1 and abs(self.y - other.y) <= 1
+
+# Initialize Individuals
+num_healthy = 150
+num_sick = 25
+num_nurses = 5
+num_doctors = 4
+individuals = []
+
+# Create healthy and sick individuals
+for i in range(num_healthy):
+    room_choice = random.choice(['room1', 'room2'])
+    if room_choice == 'room1':
+        x = random.randint(room1_start_x, room1_end_x)
+        y = random.randint(room1_start_y, room1_end_y)
+    else:
+        x = random.randint(room2_start_x, room2_end_x)
+        y = random.randint(room2_start_y, room2_end_y)
+    individuals.append(Individual(i, x, y, 'healthy', random.choice(velocities)))
+
+for i in range(num_sick):
+    room_choice = random.choice(['room1', 'room2'])
+    if room_choice == 'room1':
+        x = random.randint(room1_start_x, room1_end_x)
+        y = random.randint(room1_start_y, room1_end_y)
+    else:
+        x = random.randint(room2_start_x, room2_end_x)
+        y = random.randint(room2_start_y, room2_end_y)
+    individuals.append(Individual(i + num_healthy, x, y, 'sick', random.choice(velocities)))
+
+# Create nurses
+for i in range(num_nurses):
+    room_choice = random.choice(['room1', 'room2'])
+    if room_choice == 'room1':
+        x = random.randint(room1_start_x, room1_end_x)
+        y = random.randint(room1_start_y, room1_end_y)
+    else:
+        x = random.randint(room2_start_x, room2_end_x)
+        y = random.randint(room2_start_y, room2_end_y)
+    individuals.append(Individual(i + num_healthy + num_sick, x, y, 'healthy', random.choice(velocities), 'nurse'))
+
+# Create doctors
+for i in range(num_doctors):
+    (start_x, start_y, width, height) = consult_rooms[i]
+    x = random.randint(start_x, start_x + width)
+    y = random.randint(start_y, start_y + height)
+    individuals.append(Individual(i + num_healthy + num_sick + num_nurses, x, y, 'healthy', 0, 'doctor'))
+
+# Data collection
+infection_data = []
+
+# Visualization setup
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# Function to plot the layout of the rooms and halls
+def plot_layout(ax):
+    # Room 1
+    room1 = patches.Rectangle((room1_start_x, room1_start_y), room1_end_x - room1_start_x, room1_end_y - room1_start_y, linewidth=2, edgecolor='r', facecolor='none')
+    ax.add_patch(room1)
+    plt.text(50, 30, 'Room 1', ha='center', va='center')
+    # Hall 1
+    hall1 = patches.Rectangle((hall1_start_x, hall1_start_y), hall1_end_x - hall1_start_x, hall1_end_y - hall1_start_y, linewidth=2, edgecolor='b', facecolor='none')
+    ax.add_patch(hall1)
+    plt.text(150, 42.5, 'Hall 1', ha='center', va='center')
+    # Room 2
+    room2 = patches.Rectangle((room2_start_x, room2_start_y), room2_end_x - room2_start_x, room2_end_y - room2_start_y, linewidth=2, edgecolor='g', facecolor='none')
+    ax.add_patch(room2)
+    plt.text(250, 30, 'Room 2', ha='center', va='center')
+    # Hall 2
+    hall2 = patches.Rectangle((hall2_start_x, hall2_start_y), hall2_end_x - hall2_start_x, hall2_end_y - hall2_start_y, linewidth=2, edgecolor='b', facecolor='none')
+    ax.add_patch(hall2)
+    plt.text(150, 22.5, 'Hall 2', ha='center', va='center')
+    # Consultation rooms
+    for i, (start_x, start_y, width, height) in enumerate(consult_rooms):
+        consult_room = patches.Rectangle((start_x, start_y), width, height, linewidth=2, edgecolor='orange', facecolor='none')
+        ax.add_patch(consult_room)
+        plt.text(start_x + width / 2, start_y + height / 2, f'Consultation {i + 1}', ha='center', va='center')
+    ax.set_xlim(-10, 310)
+    ax.set_ylim(-10, 100)
+
+# Update function for animation
+def update(frame):
+    ax.clear()
+    plot_layout(ax)
+    for individual in individuals:
+        individual.move()
+    for individual in individuals:
+        if individual.status == 'sick':
+            individual.infect(individuals, infection_probability)
+        color = 'red' if individual.status == 'sick' else ('blue' if individual.status == 'infected' else ('yellow' if individual.role == 'nurse' else ('orange' if individual.role == 'doctor' else 'green')))
+        ax.plot(individual.x, individual.y, 'o', color=color)
+
+    # Collect data
+    num_infected = sum(1 for ind in individuals if ind.status == 'infected')
+    infection_data.append(num_infected)
+    
+    ax.set_title(f"Time Step: {frame}")
+
+# Create and retain the animation object
+ani = FuncAnimation(fig, update, frames=300, repeat=False)
+
+plt.show()
+
+# Plot infection data
+plt.figure(figsize=(10, 6))
+plt.plot(range(len(infection_data)), infection_data, label='Infected Individuals')
+plt.xlabel('Time Steps')
+plt.ylabel('Number of Infected Individuals')
+plt.title('Infection Spread Over Time')
+plt.legend()
+plt.grid(True)
+plt.show()
