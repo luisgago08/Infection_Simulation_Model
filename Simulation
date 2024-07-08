@@ -1,4 +1,3 @@
-
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -34,7 +33,15 @@ consult_rooms = [
 
 # Define possible velocities for individuals
 velocities = [0, 1, 2, 3]  # 0: stationary, 1: slow, 2: normal, 3: fast
-infection_probability = 0.1  # Probability of infection
+infection_probability = 0.2  # Probability of infection
+doctor_infection_probability = 0.01  # Probability of infection for doctors
+vector_duration = 15  # Number of time steps nurses remain vectors after contact
+consultation_time = 10  # Time units spent in consultation
+
+# Fixed positions for doctors
+doctor_positions = [
+    (15, 75), (45, 75), (215, 75), (245, 75)
+]
 
 # Individual Class
 class Individual:
@@ -46,7 +53,10 @@ class Individual:
         self.velocity = velocity  # Movement speed
         self.direction = random.choice([-1, 1])  # Random initial direction (left or right)
         self.role = role  # Role: 'patient', 'nurse', 'doctor'
+        self.vector_time = 0  # Time steps nurse remains a vector
+        self.consultation_time_left = 0  # Time units left in consultation
         self.room = self.get_room()  # Determine the initial room based on coordinates
+        self.in_consultation = False  # Whether the individual is currently in consultation
 
     def get_room(self):
         if room1_start_x <= self.x <= room1_end_x and room1_start_y <= self.y <= room1_end_y:
@@ -63,6 +73,18 @@ class Individual:
         return 'undefined'
 
     def move(self):
+        if self.consultation_time_left > 0:
+            self.consultation_time_left -= 1
+            if self.consultation_time_left == 0:
+                self.in_consultation = False
+                # Move patient back to the main rooms after consultation
+                if self.x < hall1_start_x:
+                    self.x = random.randint(room1_start_x, room1_end_x)
+                    self.y = random.randint(room1_start_y, room1_end_y)
+                else:
+                    self.x = random.randint(room2_start_x, room2_end_x)
+                    self.y = random.randint(room2_start_y, room2_end_y)
+            return
         if self.velocity == 0 or self.role == 'doctor':
             return  # Stationary individuals and doctors do not move
 
@@ -105,21 +127,66 @@ class Individual:
         self.room = self.get_room()
 
     def infect(self, others, infection_probability):
+        # General infection logic for sick individuals
         if self.status == 'sick':
+            for other in others:
+                if other.status == 'healthy':
+                    if other.role == 'nurse' and self.is_near(other):  # Sharing the same space
+                        if random.random() < infection_probability:
+                            other.vector_time = vector_duration  # Nurse becomes a vector
+                    if self.room == 'consultation' and other.role == 'doctor' and other.status == 'healthy' and other.is_same_room(self):
+                        if random.random() < doctor_infection_probability:
+                            other.status = 'infected'
+                    if self.is_near(other) and random.random() < infection_probability:
+                        if other.role != 'nurse':  # Nurses cannot become sick, only temporary vectors
+                            other.status = 'infected'
+
+        # Infection logic for nurses who are temporary vectors
+        elif self.role == 'nurse' and self.vector_time > 0:
+            self.vector_time -= 1
             for other in others:
                 if other.status == 'healthy' and self.is_near(other):
                     if random.random() < infection_probability:
-                        other.status = 'infected'
+                        if other.role != 'nurse':  # Nurses cannot infect other nurses
+                            other.status = 'infected'
+            if self.vector_time == 0:
+                self.status = 'healthy'
+
+        # Infection logic for doctors in consultation rooms
+        elif self.role == 'doctor':
+            if self.status == 'healthy':
+                for other in others:
+                    if other.status == 'sick' and self.room == 'consultation' and other.is_same_room(self):
+                        if random.random() < doctor_infection_probability:
+                            self.status = 'infected'
 
     def is_near(self, other):
         return abs(self.x - other.x) <= 1 and abs(self.y - other.y) <= 1
 
+    def is_same_room(self, other):
+        return abs(self.x - other.x) <= 10 and abs(self.y - other.y) <= 10
+
+    def call_to_consultation(self, patient):
+        if self.role == 'doctor' and self.consultation_time_left == 0 and not self.in_consultation:
+            patient.consultation_time_left = consultation_time
+            patient.in_consultation = True
+            # Move patient to the consultation room
+            (start_x, start_y, width, height) = consult_rooms[doctors.index(self)]
+            patient.x = random.randint(start_x, start_x + width - 1)
+            patient.y = random.randint(start_y, start_y + height - 1)
+            self.in_consultation = True
+            self.consultation_time_left = consultation_time
+            # Reset doctor's position to their fixed consultation position
+            self.x, self.y = doctor_positions[doctors.index(self)]
+            print(f"Doctor {self.id} called patient {patient.id} to consultation room at ({self.x}, {self.y})")
+
 # Initialize Individuals
-num_healthy = 150
-num_sick = 25
+num_healthy = 100
+num_sick = 50
 num_nurses = 5
 num_doctors = 4
 individuals = []
+doctors = []
 
 # Create healthy and sick individuals
 for i in range(num_healthy):
@@ -156,9 +223,11 @@ for i in range(num_nurses):
 # Create doctors
 for i in range(num_doctors):
     (start_x, start_y, width, height) = consult_rooms[i]
-    x = random.randint(start_x, start_x + width)
-    y = random.randint(start_y, start_y + height)
-    individuals.append(Individual(i + num_healthy + num_sick + num_nurses, x, y, 'healthy', 0, 'doctor'))
+    x, y = doctor_positions[i]
+    doctor = Individual(i + num_healthy + num_sick + num_nurses, x, y, 'healthy', 0, 'doctor')
+    individuals.append(doctor)
+    doctors.append(doctor)
+    print(f"Doctor {doctor.id} initialized at ({doctor.x}, {doctor.y})")
 
 # Data collection
 infection_data = []
@@ -188,7 +257,7 @@ def plot_layout(ax):
     for i, (start_x, start_y, width, height) in enumerate(consult_rooms):
         consult_room = patches.Rectangle((start_x, start_y), width, height, linewidth=2, edgecolor='orange', facecolor='none')
         ax.add_patch(consult_room)
-        plt.text(start_x + width / 2, start_y + height / 2, f'Consultation {i + 1}', ha='center', va='center')
+        plt.text(start_x + width / 2, start_y + height / 2, f'Doctor {i + 1}', ha='center', va='center')
     ax.set_xlim(-10, 310)
     ax.set_ylim(-10, 100)
 
@@ -199,9 +268,19 @@ def update(frame):
     for individual in individuals:
         individual.move()
     for individual in individuals:
-        if individual.status == 'sick':
-            individual.infect(individuals, infection_probability)
-        color = 'red' if individual.status == 'sick' else ('blue' if individual.status == 'infected' else ('yellow' if individual.role == 'nurse' else ('orange' if individual.role == 'doctor' else 'green')))
+        individual.infect(individuals, infection_probability)
+        if individual.role == 'doctor':
+            available_patients = [p for p in individuals if p.role == 'patient' and not p.in_consultation and p.consultation_time_left == 0]
+            if available_patients:
+                patient = random.choice(available_patients)
+                individual.call_to_consultation(patient)
+        if individual.role == 'nurse' and individual.vector_time > 0:
+            color = 'purple'
+        else:
+            if individual.role == 'doctor' and individual.status == 'infected':
+                color = 'pink'  # Infected doctors are shown in pink
+            else:
+                color = 'red' if individual.status == 'sick' else ('blue' if individual.status == 'infected' else ('yellow' if individual.role == 'nurse' else ('orange' if individual.role == 'doctor' else 'green')))
         ax.plot(individual.x, individual.y, 'o', color=color)
 
     # Collect data
@@ -211,7 +290,7 @@ def update(frame):
     ax.set_title(f"Time Step: {frame}")
 
 # Create and retain the animation object
-ani = FuncAnimation(fig, update, frames=300, repeat=False)
+ani = FuncAnimation(fig, update, frames=1000, repeat=False)
 
 plt.show()
 
