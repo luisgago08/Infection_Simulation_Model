@@ -1,0 +1,173 @@
+##Comparison with older layout##
+
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+
+# Set a fixed random seed for reproducibility
+random.seed(42)
+np.random.seed(42)
+
+# Define the layout dimensions for the old smaller layout
+old_layout = {
+    'room1_start_x': 0, 'room1_start_y': 0, 'room1_end_x': 100, 'room1_end_y': 60,
+    'room2_start_x': 200, 'room2_start_y': 0, 'room2_end_x': 300, 'room2_end_y': 60,
+    'consult_rooms': [(0, 60, 30, 30), (30, 60, 30, 30), (200, 60, 30, 30), (230, 60, 30, 30)],
+    'doctor_positions': [(15, 75), (45, 75), (215, 75), (245, 75)]
+}
+
+# Define the layout dimensions for the new bigger layout
+new_layout = {
+    'room1_start_x': 0, 'room1_start_y': 0, 'room1_end_x': 100, 'room1_end_y': 120,
+    'room2_start_x': 200, 'room2_start_y': 0, 'room2_end_x': 300, 'room2_end_y': 120,
+    'consult_rooms': [(0, 120, 30, 30), (30, 120, 30, 30), (200, 120, 30, 30), (230, 120, 30, 30)],
+    'doctor_positions': [(15, 135), (45, 135), (215, 135), (245, 135)]
+}
+
+# Define common parameters
+velocities = [0, 1, 2, 3]
+vector_duration = 30
+consultation_time = 10
+num_steps = 1500
+num_simulations = 5
+probabilities = [0.05, 0.1, 0.2, 0.3]
+
+class Individual:
+    def __init__(self, id, x, y, status, velocity, role='patient'):
+        self.id = id
+        self.x = x
+        self.y = y
+        self.status = status
+        self.velocity = velocity
+        self.role = role
+        self.vector_time = 0
+        self.consultation_time_left = 0
+        self.in_consultation = False
+
+    def move(self, layout):
+        if self.consultation_time_left > 0:
+            self.consultation_time_left -= 1
+            if self.consultation_time_left == 0:
+                self.in_consultation = False
+            return
+        if self.velocity == 0 or self.role == 'doctor':
+            return
+        self.x += random.choice([-self.velocity, self.velocity])
+        self.y += random.choice([-self.velocity, self.velocity])
+        self.x = max(layout['room1_start_x'], min(self.x, layout['room2_end_x']))
+        self.y = max(layout['room1_start_y'], min(self.y, layout['room2_end_y']))
+
+    def infect(self, others, infection_probability):
+        if self.status == 'sick':
+            for other in others:
+                if other.status == 'healthy' and self.is_near(other):
+                    if random.random() < infection_probability:
+                        other.status = 'infected'
+        elif self.role == 'nurse' and self.vector_time > 0:
+            self.vector_time -= 1
+            for other in others:
+                if other.status == 'healthy' and self.is_near(other):
+                    if random.random() < infection_probability:
+                        other.status = 'infected'
+            if self.vector_time == 0:
+                self.status = 'healthy'
+
+    def is_near(self, other):
+        return abs(self.x - other.x) <= 1 and abs(self.y - other.y) <= 1
+
+    def call_to_consultation(self, patient, layout, doctors):
+        if self.role == 'doctor' and self.consultation_time_left == 0 and not self.in_consultation:
+            patient.consultation_time_left = consultation_time
+            patient.in_consultation = True
+            (start_x, start_y, width, height) = layout['consult_rooms'][doctors.index(self)]
+            patient.x = random.randint(start_x, start_x + width - 1)
+            patient.y = random.randint(start_y, start_y + height - 1)
+            self.in_consultation = True
+            self.consultation_time_left = consultation_time
+            self.x, self.y = layout['doctor_positions'][doctors.index(self)]
+
+def initialize_individuals(num_healthy, num_sick, num_nurses, num_doctors, velocities, layout):
+    individuals = []
+    doctors = []
+
+    for i in range(num_healthy):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(layout['room1_start_x'], layout['room1_end_x'])
+            y = random.randint(layout['room1_start_y'], layout['room1_end_y'])
+        else:
+            x = random.randint(layout['room2_start_x'], layout['room2_end_x'])
+            y = random.randint(layout['room2_start_y'], layout['room2_end_y'])
+        individuals.append(Individual(i, x, y, 'healthy', random.choice(velocities)))
+
+    for i in range(num_sick):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(layout['room1_start_x'], layout['room1_end_x'])
+            y = random.randint(layout['room1_start_y'], layout['room1_end_y'])
+        else:
+            x = random.randint(layout['room2_start_x'], layout['room2_end_x'])
+            y = random.randint(layout['room2_start_y'], layout['room2_end_y'])
+        individuals.append(Individual(i + num_healthy, x, y, 'sick', random.choice(velocities)))
+
+    for i in range(num_nurses):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(layout['room1_start_x'], layout['room1_end_x'])
+            y = random.randint(layout['room1_start_y'], layout['room1_end_y'])
+        else:
+            x = random.randint(layout['room2_start_x'], layout['room2_end_x'])
+            y = random.randint(layout['room2_start_y'], layout['room2_end_y'])
+        individuals.append(Individual(i + num_healthy + num_sick, x, y, 'healthy', random.choice(velocities), 'nurse'))
+
+    for i in range(num_doctors):
+        x, y = layout['doctor_positions'][i]
+        doctor = Individual(i + num_healthy + num_sick + num_nurses, x, y, 'healthy', 0, 'doctor')
+        individuals.append(doctor)
+        doctors.append(doctor)
+
+    return individuals, doctors
+
+def run_simulation(layout, infection_probability, num_steps=1000):
+    individuals, doctors = initialize_individuals(num_healthy=100, num_sick=50, num_nurses=5, num_doctors=4, velocities=velocities, layout=layout)
+    infection_data = []
+
+    for step in range(num_steps):
+        for individual in individuals:
+            individual.move(layout)
+        for individual in individuals:
+            individual.infect(individuals, infection_probability)
+            if individual.role == 'doctor':
+                available_patients = [p for p in individuals if p.role == 'patient' and not p.in_consultation and p.consultation_time_left == 0]
+                if available_patients:
+                    patient = random.choice(available_patients)
+                    individual.call_to_consultation(patient, layout, doctors)
+        num_infected = sum(1 for ind in individuals if ind.status == 'infected')
+        infection_data.append(num_infected)
+
+    return infection_data
+
+def average_simulations(layout, p, num_simulations, num_steps):
+    all_runs_data = []
+    for _ in range(num_simulations):
+        infection_data = run_simulation(layout, p, num_steps)
+        all_runs_data.append(infection_data)
+    average_infection_data = np.mean(all_runs_data, axis=0)
+    return average_infection_data
+
+# Run simulations and plot the results
+plt.figure(figsize=(12, 8))
+
+for beta in probabilities:
+    avg_infections_old = average_simulations(old_layout, beta, num_simulations, num_steps)
+    avg_infections_new = average_simulations(new_layout, beta, num_simulations, num_steps)
+    
+    plt.plot(range(num_steps), avg_infections_old, label=f'Old Layout p = {beta}', linestyle='dotted')
+    plt.plot(range(num_steps), avg_infections_new, label=f'Bigger Layout p = {beta}', linestyle='solid')
+
+plt.xlabel('Time Steps')
+plt.ylabel('Average Number of Infected Individuals')
+plt.title('Infection Spread Over Time for Different Layouts and Probabilities')
+plt.legend()
+plt.grid(True)
+plt.show()
