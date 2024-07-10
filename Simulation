@@ -1,3 +1,4 @@
+##Import Libraries and Define Parameters##
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -42,6 +43,8 @@ consultation_time = 10  # Time units spent in consultation
 doctor_positions = [
     (15, 75), (45, 75), (215, 75), (245, 75)
 ]
+
+##Define the Individual Class##
 
 # Individual Class
 class Individual:
@@ -180,6 +183,8 @@ class Individual:
             self.x, self.y = doctor_positions[doctors.index(self)]
             print(f"Doctor {self.id} called patient {patient.id} to consultation room at ({self.x}, {self.y})")
 
+##Initialize Individuals##
+
 # Initialize Individuals
 num_healthy = 100
 num_sick = 50
@@ -229,6 +234,8 @@ for i in range(num_doctors):
     doctors.append(doctor)
     print(f"Doctor {doctor.id} initialized at ({doctor.x}, {doctor.y})")
 
+##Visualization Setup##
+
 # Data collection
 infection_data = []
 
@@ -261,6 +268,8 @@ def plot_layout(ax):
     ax.set_xlim(-10, 310)
     ax.set_ylim(-10, 100)
 
+##Update Function for Animation##
+
 # Update function for animation
 def update(frame):
     ax.clear()
@@ -292,6 +301,9 @@ def update(frame):
 # Create and retain the animation object
 ani = FuncAnimation(fig, update, frames=1000, repeat=False)
 
+##Run Animation and Plot Infection Data##
+
+# Show the animation
 plt.show()
 
 # Plot infection data
