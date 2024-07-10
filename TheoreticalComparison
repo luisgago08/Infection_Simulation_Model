@@ -1,0 +1,309 @@
+##Import Libraries and Define Parameters##
+
+# Import necessary libraries
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+
+# Define parameters for the simulation
+S0 = 100  # Initial number of susceptible individuals
+I0 = 0    # Initial number of infected individuals (will be calculated)
+S_sick0 = 50  # Number of initial sick individuals
+area = 1500  # Approximate area of the layout/number of positions around a patient where you can get infected (12000/9)
+t_max = 1000  # Total time steps for the theoretical model
+beta_values = [0.05, 0.1, 0.2, 0.3]  # Different transmission rates
+time_steps = np.arange(t_max)  # Time steps from 0 to t_max
+num_runs = 15  # Number of simulation runs
+num_steps = 1000  # Define the number of steps for each simulation run
+
+##Define Functions for Theoretical Model##
+
+# Function to calculate the number of susceptible individuals over time
+def S(t, S0, beta, S_sick, area):
+    return S0 * np.exp(-beta * (S_sick / area) * t)
+
+# Define the refined SI model differential equations
+def si_model(y, t, beta):
+    S, I, S_sick = y
+    dSdt = -beta * S * S_sick / area  # Change in susceptible individuals
+    dIdt = beta * S * S_sick / area  # Change in infected individuals
+    dSsickdt = 0  # Sick individuals remain constant
+    return [dSdt, dIdt, dSsickdt]
+
+# Function to solve the refined SI model
+def solve_si(S0, I0, S_sick0, beta, t):
+    y0 = [S0, I0, S_sick0]  # Initial conditions
+    ret = odeint(si_model, y0, t, args=(beta,))  # Solve the differential equations
+    S, I, S_sick = ret.T  # Transpose the result to separate S, I, and S_sick
+    return S, I, S_sick
+
+##Define Classes and Functions for Simulation##
+
+# Define bounds for rooms and hallways in the simulation
+room1_bounds = (0, 0, 100, 60)
+hall1_bounds = (100, 40, 200, 45)
+room2_bounds = (200, 0, 300, 60)
+hall2_bounds = (100, 20, 200, 25)
+consult_rooms = [(0, 60, 30, 30), (30, 60, 30, 30), (200, 60, 30, 30), (230, 60, 30, 30)]
+velocities = [0, 1, 2, 3]  # Possible velocities for individuals
+doctor_positions = [(15, 75), (45, 75), (215, 75), (245, 75)]  # Positions for doctors
+consultation_time = 20  # Time for each consultation
+vector_duration = 15  # Duration a nurse can infect others
+doctor_infection_probability = 0.01  # Probability a doctor gets infected during consultation
+
+# Define the Individual class to represent people in the simulation
+class Individual:
+    def __init__(self, id, x, y, status, velocity, role='patient', doctors=None):
+        self.id = id
+        self.x = x
+        self.y = y
+        self.status = status
+        self.velocity = velocity
+        self.direction = random.choice([-1, 1])
+        self.role = role
+        self.vector_time = 0
+        self.consultation_time_left = 0
+        self.room = self.get_room()
+        self.in_consultation = False
+        self.consultation_time = consultation_time
+        self.doctors = doctors
+
+    # Determine the room of the individual based on their position
+    def get_room(self):
+        if room1_bounds[0] <= self.x <= room1_bounds[2] and room1_bounds[1] <= self.y <= room1_bounds[3]:
+            return 'room1'
+        elif hall1_bounds[0] <= self.x <= hall1_bounds[2] and hall1_bounds[1] <= self.y <= hall1_bounds[3]:
+            return 'hall1'
+        elif room2_bounds[0] <= self.x <= room2_bounds[2] and room2_bounds[1] <= self.y <= room2_bounds[3]:
+            return 'room2'
+        elif hall2_bounds[0] <= self.x <= hall2_bounds[2] and hall2_bounds[1] <= self.y <= hall2_bounds[3]:
+            return 'hall2'
+        for (start_x, start_y, width, height) in consult_rooms:
+            if start_x <= self.x <= start_x + width and start_y <= self.y <= start_y + height:
+                return 'consultation'
+        return 'undefined'
+
+    # Move the individual based on their role and velocity
+    def move(self):
+        if self.consultation_time_left > 0:
+            self.consultation_time_left -= 1
+            if self.consultation_time_left == 0:
+                self.in_consultation = False
+                if self.x < hall1_bounds[0]:
+                    self.x = random.randint(room1_bounds[0], room1_bounds[2])
+                    self.y = random.randint(room1_bounds[1], room1_bounds[3])
+                else:
+                    self.x = random.randint(room2_bounds[0], room2_bounds[2])
+                    self.y = random.randint(room2_bounds[1], room2_bounds[3])
+            return
+
+        if self.velocity == 0 or self.role == 'doctor':
+            return
+
+        if self.room in ['hall1', 'hall2']:
+            self.x += self.direction * self.velocity
+            if self.x <= hall1_bounds[0]:
+                self.room = 'room1'
+                self.x = room1_bounds[2] - 1
+            elif self.x >= hall1_bounds[2]:
+                self.room = 'room2'
+                self.x = room2_bounds[0] + 1
+            self.y = hall1_bounds[1] + (hall1_bounds[3] - hall1_bounds[1]) // 2 if self.room == 'hall1' else hall2_bounds[1] + (hall2_bounds[3] - hall2_bounds[1]) // 2
+        else:
+            self.x += random.choice([-self.velocity, self.velocity])
+            self.y += random.choice([-self.velocity, self.velocity])
+            if self.room == 'room1':
+                self.x = max(room1_bounds[0], min(self.x, room1_bounds[2]))
+                self.y = max(room1_bounds[1], min(self.y, room1_bounds[3]))
+                if self.x >= room1_bounds[2]:
+                    self.room = random.choice(['hall1', 'hall2'])
+                    if self.room == 'hall1':
+                        self.x = hall1_bounds[0] + 1
+                        self.y = hall1_bounds[1] + (hall1_bounds[3] - hall1_bounds[1]) // 2
+                    else:
+                        self.x = hall2_bounds[0] + 1
+                        self.y = hall2_bounds[1] + (hall2_bounds[3] - hall2_bounds[1]) // 2
+            elif self.room == 'room2':
+                self.x = max(room2_bounds[0], min(self.x, room2_bounds[2]))
+                self.y = max(room2_bounds[1], min(self.y, room2_bounds[3]))
+                if self.x <= room2_bounds[0]:
+                    self.room = random.choice(['hall1', 'hall2'])
+                    if self.room == 'hall1':
+                        self.x = hall1_bounds[2] - 1
+                        self.y = hall1_bounds[1] + (hall1_bounds[3] - hall1_bounds[1]) // 2
+                    else:
+                        self.x = hall2_bounds[2] - 1
+                        self.y = hall2_bounds[1] + (hall2_bounds[3] - hall2_bounds[1]) // 2
+        self.room = self.get_room()
+
+    # Handle infection logic for the individual
+    def infect(self, others, infection_probability):
+        if self.status == 'sick':
+            for other in others:
+                if other.status == 'healthy':
+                    if other.role == 'nurse' and self.is_near(other):
+                        if random.random() < infection_probability:
+                            other.vector_time = vector_duration
+                    if self.room == 'consultation' and other.role == 'doctor' and other.status == 'healthy' and self.is_same_room(other):
+                        if random.random() < doctor_infection_probability:
+                            other.status = 'infected'
+                    if self.is_near(other) and random.random() < infection_probability:
+                        if other.role != 'nurse':
+                            other.status = 'infected'
+        elif self.role == 'nurse' and self.vector_time > 0:
+            self.vector_time -= 1
+            for other in others:
+                if other.status == 'healthy' and self.is_near(other):
+                    if random.random() < infection_probability:
+                        if other.role != 'nurse':
+                            other.status = 'infected'
+            if self.vector_time == 0:
+                self.status = 'healthy'
+        elif self.role == 'doctor' and self.status == 'healthy':
+            for other in others:
+                if other.status == 'sick' and self.room == 'consultation' and self.is_same_room(other):
+                    if random.random() < doctor_infection_probability:
+                        self.status = 'infected'
+
+    # Check if another individual is near
+    def is_near(self, other):
+        return abs(self.x - other.x) <= 1 and abs(self.y - other.y) <= 1
+
+    # Check if another individual is in the same room
+    def is_same_room(self, other):
+        return abs(self.x - other.x) <= 10 and abs(self.y - other.y) <= 10
+
+    # Handle consultation logic for doctors
+    def call_to_consultation(self, patient):
+        if self.role == 'doctor' and self.consultation_time_left == 0 and not self.in_consultation:
+            patient.consultation_time_left = self.consultation_time
+            patient.in_consultation = True
+            (start_x, start_y, width, height) = consult_rooms[self.doctors.index(self)]
+            patient.x = random.randint(start_x, start_x + width - 1)
+            patient.y = random.randint(start_y, start_y + height - 1)
+            self.in_consultation = True
+            self.consultation_time_left = self.consultation_time
+            self.x, self.y = doctor_positions[self.doctors.index(self)]
+            print(f"Doctor {self.id} called patient {patient.id} to consultation room at ({self.x}, {self.y})")
+
+##Initialize Individuals##
+
+# Function to initialize the individuals in the simulation
+def initialize_individuals(num_healthy, num_sick, num_nurses, num_doctors, velocities):
+    individuals = []
+    doctors = []
+
+    # Initialize healthy individuals
+    for i in range(num_healthy):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(room1_bounds[0], room1_bounds[2])
+            y = random.randint(room1_bounds[1], room1_bounds[3])
+        else:
+            x = random.randint(room2_bounds[0], room2_bounds[2])
+            y = random.randint(room2_bounds[1], room2_bounds[3])
+        individuals.append(Individual(i, x, y, 'healthy', random.choice(velocities), doctors=doctors))
+
+    # Initialize sick individuals
+    for i in range(num_sick):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(room1_bounds[0], room1_bounds[2])
+            y = random.randint(room1_bounds[1], room1_bounds[3])
+        else:
+            x = random.randint(room2_bounds[0], room2_bounds[2])
+            y = random.randint(room2_bounds[1], room2_bounds[3])
+        individuals.append(Individual(i + num_healthy, x, y, 'sick', random.choice(velocities), doctors=doctors))
+
+    # Initialize nurses
+    for i in range(num_nurses):
+        room_choice = random.choice(['room1', 'room2'])
+        if room_choice == 'room1':
+            x = random.randint(room1_bounds[0], room1_bounds[2])
+            y = random.randint(room1_bounds[1], room1_bounds[3])
+        else:
+            x = random.randint(room2_bounds[0], room2_bounds[2])
+            y = random.randint(room2_bounds[1], room2_bounds[3])
+        individuals.append(Individual(i + num_healthy + num_sick, x, y, 'healthy', random.choice(velocities), 'nurse', doctors=doctors))
+
+    # Initialize doctors
+    for i in range(num_doctors):
+        (start_x, start_y, width, height) = consult_rooms[i]
+        x, y = doctor_positions[i]
+        doctor = Individual(i + num_healthy + num_sick + num_nurses, x, y, 'healthy', 0, 'doctor', doctors=doctors)
+        individuals.append(doctor)
+        doctors.append(doctor)
+        print(f"Doctor {doctor.id} initialized at ({doctor.x}, {doctor.y})")
+
+    return individuals, doctors
+
+##Run Simulation##
+
+# Function to run the simulation
+def run_simulation(infection_probability, num_steps=300):
+    individuals, doctors = initialize_individuals(num_healthy=100, num_sick=50, num_nurses=5, num_doctors=4, velocities=velocities)
+    infection_data = []
+
+    # Iterate through each time step
+    for step in range(num_steps):
+        for individual in individuals:
+            individual.move()  # Move each individual
+        for individual in individuals:
+            individual.infect(individuals, infection_probability)  # Infect others if applicable
+            if individual.role == 'doctor':
+                available_patients = [p for p in individuals if p.role == 'patient' and not p.in_consultation and p.consultation_time_left == 0]
+                if available_patients:
+                    patient = random.choice(available_patients)
+                    individual.call_to_consultation(patient)  # Doctors call patients for consultation
+        num_infected = sum(1 for ind in individuals if ind.status == 'infected')  # Count infected individuals
+        infection_data.append(num_infected)
+    
+    return infection_data
+
+##Run Simulations and Plot Results##
+
+# Run simulations and store average infection data
+average_infection_data = {}
+
+for p in beta_values:
+    all_runs_data = []
+    for _ in range(num_runs):
+        infection_data = run_simulation(p, num_steps)
+        all_runs_data.append(infection_data)
+    average_infection_data[p] = np.mean(all_runs_data, axis=0)
+
+##Plot Results##
+
+# Plot average infection data
+plt.figure(figsize=(10, 6))
+
+for p, data in average_infection_data.items():
+    plt.plot(range(num_steps), data, label=f'Simulation p = {p}')
+
+plt.xlabel('Time Steps')
+plt.ylabel('Average Number of Infected Individuals')
+plt.title('Infection Spread Over Time for Different Probabilities')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plotting the theoretical results along with the simulation results
+plt.figure(figsize=(10, 6))
+
+colors = ['blue', 'orange', 'green', 'red']
+
+t = np.linspace(0, t_max, t_max)
+for beta, color in zip(beta_values, colors):
+    S, I, S_sick = solve_si(S0, I0, S_sick0, beta, t)
+    plt.plot(t, I, label=f'Theoretical p = {beta}', linestyle='dashed', color=color)
+
+for p, data in average_infection_data.items():
+    plt.plot(range(num_steps), data, label=f'Simulation p = {p}', color=colors[beta_values.index(p)])
+
+plt.xlabel('Time Steps')
+plt.ylabel('Number of Infected Individuals')
+plt.title('Infection Spread: Theoretical vs Simulation')
+plt.legend()
+plt.grid(True)
+plt.show()
